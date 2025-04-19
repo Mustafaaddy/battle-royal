@@ -1,0 +1,315 @@
+import pygame
+import random
+import math
+
+# Initialize Pygame
+pygame.init()
+
+# Constants
+WINDOW_WIDTH = 800
+WINDOW_HEIGHT = 600
+PLAYER_SIZE = 20
+BULLET_SIZE = 5
+ENEMY_SIZE = 20
+PLAYER_SPEED = 5
+BULLET_SPEED = 10
+ENEMY_SPEED = 3
+PICKUP_SIZE = 15
+ZONE_SHRINK_RATE = 0.3
+
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
+PURPLE = (128, 0, 128)
+
+class Player:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.health = 100
+        self.ammo = 30
+        self.score = 0
+        self.rect = pygame.Rect(x, y, PLAYER_SIZE, PLAYER_SIZE)
+
+    def move(self, dx, dy):
+        new_x = self.x + dx * PLAYER_SPEED
+        new_y = self.y + dy * PLAYER_SPEED
+        
+        # Keep player within bounds
+        if 0 <= new_x <= WINDOW_WIDTH - PLAYER_SIZE:
+            self.x = new_x
+        if 0 <= new_y <= WINDOW_HEIGHT - PLAYER_SIZE:
+            self.y = new_y
+            
+        self.rect.x = self.x
+        self.rect.y = self.y
+
+    def take_damage(self, amount):
+        self.health -= amount
+        return self.health <= 0
+
+class Enemy:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.health = 50
+        self.rect = pygame.Rect(x, y, ENEMY_SIZE, ENEMY_SIZE)
+        self.shoot_cooldown = 0
+
+    def move(self, target_x, target_y):
+        dx = target_x - self.x
+        dy = target_y - self.y
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist != 0:
+            dx = dx / dist * ENEMY_SPEED
+            dy = dy / dist * ENEMY_SPEED
+            self.x += dx
+            self.y += dy
+            self.rect.x = self.x
+            self.rect.y = self.y
+
+    def take_damage(self, amount):
+        self.health -= amount
+        return self.health <= 0
+
+class Bullet:
+    def __init__(self, x, y, direction, is_enemy=False):
+        self.x = x
+        self.y = y
+        self.direction = direction
+        self.is_enemy = is_enemy
+        self.rect = pygame.Rect(x, y, BULLET_SIZE, BULLET_SIZE)
+
+    def move(self):
+        dx = math.cos(self.direction) * BULLET_SPEED
+        dy = math.sin(self.direction) * BULLET_SPEED
+        self.x += dx
+        self.y += dy
+        self.rect.x = self.x
+        self.rect.y = self.y
+
+    def is_off_screen(self):
+        return (self.x < 0 or self.x > WINDOW_WIDTH or 
+                self.y < 0 or self.y > WINDOW_HEIGHT)
+
+class Pickup:
+    def __init__(self, x, y, pickup_type):
+        self.x = x
+        self.y = y
+        self.type = pickup_type  # 'health' or 'ammo'
+        self.rect = pygame.Rect(x, y, PICKUP_SIZE, PICKUP_SIZE)
+
+class PlayZone:
+    def __init__(self):
+        self.radius = WINDOW_WIDTH // 2
+        self.x = WINDOW_WIDTH // 2
+        self.y = WINDOW_HEIGHT // 2
+        self.damage = 1
+
+    def shrink(self):
+        self.radius = max(100, self.radius - ZONE_SHRINK_RATE)
+
+    def is_outside(self, x, y):
+        dx = x - self.x
+        dy = y - self.y
+        return math.sqrt(dx * dx + dy * dy) > self.radius
+
+class Game:
+    def __init__(self):
+        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        pygame.display.set_caption("2D Battle Royale")
+        self.clock = pygame.time.Clock()
+        self.player = Player(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2)
+        self.bullets = []
+        self.enemies = []
+        self.pickups = []
+        self.play_zone = PlayZone()
+        self.running = True
+        self.spawn_timer = 0
+        self.pickup_timer = 0
+        self.game_over = False
+
+    def spawn_enemy(self):
+        side = random.randint(0, 3)
+        if side == 0:  # Top
+            x = random.randint(0, WINDOW_WIDTH)
+            y = -ENEMY_SIZE
+        elif side == 1:  # Right
+            x = WINDOW_WIDTH + ENEMY_SIZE
+            y = random.randint(0, WINDOW_HEIGHT)
+        elif side == 2:  # Bottom
+            x = random.randint(0, WINDOW_WIDTH)
+            y = WINDOW_HEIGHT + ENEMY_SIZE
+        else:  # Left
+            x = -ENEMY_SIZE
+            y = random.randint(0, WINDOW_HEIGHT)
+        self.enemies.append(Enemy(x, y))
+
+    def spawn_pickup(self):
+        x = random.randint(PICKUP_SIZE, WINDOW_WIDTH - PICKUP_SIZE)
+        y = random.randint(PICKUP_SIZE, WINDOW_HEIGHT - PICKUP_SIZE)
+        pickup_type = random.choice(['health', 'ammo'])
+        self.pickups.append(Pickup(x, y, pickup_type))
+
+    def handle_events(self):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN and not self.game_over:
+                if event.button == 1 and self.player.ammo > 0:  # Left click
+                    self.shoot(event.pos)
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r and self.game_over:
+                    self.__init__()
+
+    def shoot(self, target_pos):
+        if self.player.ammo <= 0:
+            return
+            
+        dx = target_pos[0] - (self.player.x + PLAYER_SIZE // 2)
+        dy = target_pos[1] - (self.player.y + PLAYER_SIZE // 2)
+        direction = math.atan2(dy, dx)
+        
+        bullet = Bullet(
+            self.player.x + PLAYER_SIZE // 2,
+            self.player.y + PLAYER_SIZE // 2,
+            direction
+        )
+        self.bullets.append(bullet)
+        self.player.ammo -= 1
+
+    def update(self):
+        if self.game_over:
+            return
+
+        # Handle player movement
+        keys = pygame.key.get_pressed()
+        dx = keys[pygame.K_d] - keys[pygame.K_a]
+        dy = keys[pygame.K_s] - keys[pygame.K_w]
+        self.player.move(dx, dy)
+
+        # Update bullets
+        for bullet in self.bullets[:]:
+            bullet.move()
+            if bullet.is_off_screen():
+                self.bullets.remove(bullet)
+                continue
+
+            # Check bullet collisions
+            if bullet.is_enemy:
+                if bullet.rect.colliderect(self.player.rect):
+                    if self.player.take_damage(10):
+                        self.game_over = True
+                    self.bullets.remove(bullet)
+            else:
+                for enemy in self.enemies[:]:
+                    if bullet.rect.colliderect(enemy.rect):
+                        if enemy.take_damage(25):
+                            self.enemies.remove(enemy)
+                            self.player.score += 10
+                        self.bullets.remove(bullet)
+                        break
+
+        # Update enemies
+        for enemy in self.enemies:
+            enemy.move(self.player.x, self.player.y)
+            enemy.shoot_cooldown = max(0, enemy.shoot_cooldown - 1)
+            
+            if enemy.shoot_cooldown == 0:
+                dx = self.player.x - enemy.x
+                dy = self.player.y - enemy.y
+                direction = math.atan2(dy, dx)
+                bullet = Bullet(enemy.x + ENEMY_SIZE // 2, enemy.y + ENEMY_SIZE // 2, direction, True)
+                self.bullets.append(bullet)
+                enemy.shoot_cooldown = 60
+
+        # Spawn enemies
+        self.spawn_timer += 1
+        if self.spawn_timer >= 120:  # Spawn enemy every 2 seconds
+            self.spawn_enemy()
+            self.spawn_timer = 0
+
+        # Spawn pickups
+        self.pickup_timer += 1
+        if self.pickup_timer >= 300:  # Spawn pickup every 5 seconds
+            self.spawn_pickup()
+            self.pickup_timer = 0
+
+        # Check pickup collisions
+        for pickup in self.pickups[:]:
+            if pickup.rect.colliderect(self.player.rect):
+                if pickup.type == 'health':
+                    self.player.health = min(100, self.player.health + 25)
+                else:  # ammo
+                    self.player.ammo += 15
+                self.pickups.remove(pickup)
+
+        # Update play zone
+        self.play_zone.shrink()
+        if self.play_zone.is_outside(self.player.x + PLAYER_SIZE // 2, self.player.y + PLAYER_SIZE // 2):
+            self.player.take_damage(self.play_zone.damage)
+            if self.player.health <= 0:
+                self.game_over = True
+
+    def draw(self):
+        self.screen.fill(BLACK)
+        
+        # Draw play zone
+        pygame.draw.circle(self.screen, PURPLE, (self.play_zone.x, self.play_zone.y), 
+                         int(self.play_zone.radius), 2)
+        
+        # Draw pickups
+        for pickup in self.pickups:
+            color = GREEN if pickup.type == 'health' else YELLOW
+            pygame.draw.rect(self.screen, color, pickup.rect)
+
+        # Draw player
+        pygame.draw.rect(self.screen, BLUE, self.player.rect)
+        
+        # Draw enemies
+        for enemy in self.enemies:
+            pygame.draw.rect(self.screen, RED, enemy.rect)
+        
+        # Draw bullets
+        for bullet in self.bullets:
+            color = RED if bullet.is_enemy else WHITE
+            pygame.draw.rect(self.screen, color, bullet.rect)
+
+        # Draw HUD
+        font = pygame.font.Font(None, 36)
+        health_text = font.render(f"Health: {self.player.health}", True, WHITE)
+        ammo_text = font.render(f"Ammo: {self.player.ammo}", True, WHITE)
+        score_text = font.render(f"Score: {self.player.score}", True, WHITE)
+        
+        self.screen.blit(health_text, (10, 10))
+        self.screen.blit(ammo_text, (10, 50))
+        self.screen.blit(score_text, (10, 90))
+
+        if self.game_over:
+            game_over_font = pygame.font.Font(None, 74)
+            game_over_text = game_over_font.render("Game Over!", True, RED)
+            restart_text = font.render("Press R to Restart", True, WHITE)
+            self.screen.blit(game_over_text, 
+                           (WINDOW_WIDTH // 2 - game_over_text.get_width() // 2,
+                            WINDOW_HEIGHT // 2 - game_over_text.get_height() // 2))
+            self.screen.blit(restart_text,
+                           (WINDOW_WIDTH // 2 - restart_text.get_width() // 2,
+                            WINDOW_HEIGHT // 2 + game_over_text.get_height()))
+        
+        pygame.display.flip()
+
+    def run(self):
+        while self.running:
+            self.handle_events()
+            self.update()
+            self.draw()
+            self.clock.tick(60)
+
+if __name__ == "__main__":
+    game = Game()
+    game.run()
+    pygame.quit() 
